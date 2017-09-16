@@ -123,7 +123,7 @@ CommonWeb.trackClicksPassive = function (addEvtListener, elements, morePropertie
 };
 
 function doClick(props, elem, evt) {
-  const pageWillUnload = elem.href && elem.target !== '_blank' && !isMetaKey(evt) || elem.type === 'submit';
+  const pageWillUnload = elem.href || elem.type === 'submit';
   let unloadCallback = function () {};
   // let errorInstance = false;
 
@@ -390,10 +390,6 @@ CommonWeb.Transformations = {
   } else {
     return propertiesOrFunction;
   }
-}
-
-function isMetaKey(event) {
-  return event.metaKey || event.altKey || event.ctrlKey || event.shiftKey;
 }
 
 // This is the improved getPath that doesn't use class names but uses nth-child/id
