@@ -453,4 +453,4 @@ jQuery.fn.extend({
           }
         });
 
-module.exports = CommonWeb;
+export default CommonWeb;
