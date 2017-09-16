@@ -1,437 +1,460 @@
-(function () {
+import jQuery from 'jquery'
 
-  var options = {
-    pageviewsEventName: "pageviews",
-    inputChangeEventName: "input-changes",
-    clicksEventName: "clicks",
-    formSubmissionsEventName: "form-submissions",
-    callbackTimeout: 1000,
-    globalProperties: {
-      page_url: window.location.href,
-      referrer_url: document.referrer
-    }
-  };
-
-  // create a common namespace with options
-  var CommonWeb = {
-    options: options
-  };
-
-  CommonWeb.addGlobalProperties = function(properties) {
-    $.extend(CommonWeb.options.globalProperties, properties);
+var options = {
+  globalProperties: {
+    page_url: window.location.href,
+    referrer_url: document.referrer,
   }
+}
 
-  // initiate user tracking, using a GUID stored in a cookie
-  // The user can pass in a custom cookie name and custom GUID, if they would like
-  CommonWeb.trackSession = function(cookieName, defaultGuid) {
-    if(typeof(cookieName) !== "string") {
-      cookieName = "common_web_guid";
-    }
+// create a common namespace with options
+var CommonWeb = {
+  options: options
+}
+
+CommonWeb.addGlobalProperties = function (properties) {
+  jQuery.extend(CommonWeb.options.globalProperties, properties)
+}
+
+// initiate user tracking, using a GUID stored in a cookie
+// The user can pass in a custom cookie name and custom GUID, if they would like
+CommonWeb.trackSession = function (cookieName, defaultGuid) {
+  if (typeof(cookieName) !== "string") {
+    cookieName = "common_web_guid";
+  }
 
     // Look for the GUID in the currently set cookies
     var cookies = document.cookie.split('; ');
     var guid = null;
+    var cookieParts;
 
-    for(var i=0; i < cookies.length; i++) {
-      cookieParts = cookies[i].split('=')
-      if(cookieParts[0] === cookieName) {
-        // Got it!
-        guid = cookieParts[1];
-        break;
-      }
-    }
-
-    // We didn't find our guid in the cookies, so we need to generate our own
-    if(guid === null) {
-      if(typeof(defaultGuid) === "string") {
-        guid = defaultGuid;
-      } else {
-        genSub = function() {
-          return Math.floor((1 + Math.random()) * 0x10000).toString(16).substring(1);
+    for (var i = 0; i < cookies.length; i++) {
+      cookieParts = cookies[i].split('=');
+      if (cookieParts[0] === cookieName) {
+            // Got it!
+            guid = cookieParts[1];
+            break;
+          }
         }
 
-        guid = genSub() + genSub() + "-" + genSub() + "-" + 
-          genSub() + "-" + genSub() + "-" + genSub() + genSub() + genSub();
+    // We didn't find our guid in the cookies, so we need to generate our own
+    if (guid === null) {
+      if (typeof(defaultGuid) === "string") {
+        guid = defaultGuid;
+      } else {
+        var genSub = function () {
+          return Math.floor((1 + Math.random()) * 0x10000).toString(16).substring(1);
+        };
+
+        guid = genSub() + genSub() + "-" + genSub() + "-" +
+        genSub() + "-" + genSub() + "-" + genSub() + genSub() + genSub();
       }
 
-      expiration_date = new Date();
-      expiration_date.setFullYear(expiration_date.getFullYear() + 1);
-
-      cookie_string = cookieName + "=" + guid + "; path/; expires=" + expiration_date.toGMTString();
-      document.cookie = cookie_string
+      var cookie_string = cookieName + "=" + guid + "; path/;";
+      document.cookie = cookie_string;
 
     }
-    
+
     CommonWeb.addGlobalProperties({guid: guid});
 
     return guid;
-  }
-
-  // setup pageview tracking hooks, optionally including more properties
-  // more properties can also be a function
-  // do not double set along with track!
-  CommonWeb.trackPageview = function (moreProperties) {
-
-    var defaultProperties = CommonWeb.options.globalProperties;
-    var properties = $.extend(true, {}, defaultProperties, toProperties(moreProperties));
-
-    CommonWeb.Callback(CommonWeb.options.pageviewsEventName, properties);
-
-  }
-
-  CommonWeb.trackClicks = function (elements, moreProperties) {
-
-    if (typeof elements === 'undefined') {
-      elements = $("a");
-    }
-
-    $.each(elements, function (index, element) {
-
-      $(element).on('click', function (event) {
-
-        var timer = CommonWeb.options.callbackTimeout;
-
-        // combine local and global moreProperties
-        var properties = toClickProperties(event, element, moreProperties);
-
-        // check if the page is probably going to unload
-        var pageWillUnload = element.href && element.target !== '_blank' && !isMetaKey(event);
-        var unloadCallback = function () {
-        };
-
-        // if the page will unload, don't let the JS event bubble
-        // but navigate to the href after the click
-        if (pageWillUnload) {
-          unloadCallback = function () {
-            window.location.href = element.href;
-          };
-          event.preventDefault();
-
-          setTimeout(function() {
-            window.location.href = element.href;
-          }, timer);
-        }
-
-        CommonWeb.Callback(options.clicksEventName, properties, unloadCallback);
-
-      });
-
-    });
-
-  }
-
-  // track things that are not links; i.e. don't need any special tricks to
-  // prevent page unloads
-  CommonWeb.trackClicksPassive = function (elements, moreProperties) {
-
-    $.each(elements, function (index, element) {
-
-      $(element).on('click', function (event) {
-
-        var properties = toClickProperties(event, element, moreProperties);
-        CommonWeb.Callback(options.clicksEventName, properties);
-
-      });
-
-    });
-
-  }
-
-  // track form submissions
-  CommonWeb.trackFormSubmissions = function (elements, moreProperties) {
-
-    if (typeof elements === 'undefined') {
-      elements = $("form");
-    }
-
-    $.each(elements, function (index, element) {
-
-      var timer = CommonWeb.options.callbackTimeout;
-
-      // use to avoid duplicate submits
-      var callbackCalled = false;
-
-      $(element).on('submit', function (event) {
-
-        var properties = toSubmitProperties(event, element, moreProperties);
-
-        // assume true for now in this method
-        var pageWillUnload = true;
-        var unloadCallback = function () {
-        };
-
-        if (pageWillUnload) {
-
-          unloadCallback = function () {
-
-            // not the best approach here.
-            // the form can only be submitted
-            // once, etc.
-            if (!callbackCalled) {
-              callbackCalled = true;
-              element.submit();
-            }
-
-          };
-
-          event.preventDefault();
-
-          // We only want to fire the timeout if
-          // we know the page will unload. Ajax 
-          // form submissions shouldn't submit.
-          setTimeout(function() {
-            callbackCalled = true;
-            element.submit();
-          }, timer);
-        }
-
-        CommonWeb.Callback(options.formSubmissionsEventName, properties, unloadCallback);
-
-      });
-
-    });
-  }
-
-  CommonWeb.trackInputChanges = function (elements, moreProperties) {
-
-    if (typeof elements === 'undefined') {
-      elements = $("input, textarea, select");
-    }
-
-    $.each(elements, function(index, element) {
-      var currentValue = $(element).val()
-
-      $(element).on('change', function(event) {
-
-        var properties = toChangeProperties(event, element, currentValue, moreProperties);
-        CommonWeb.Callback(options.inputChangeEventName, properties);
-
-        currentValue = $(element).val()
-      });
-
-    });
-  }
-
-  // define a namespace just for transformations of events and elements to properties
-  // override as a workaround to add / remove properties
-  CommonWeb.Transformations = {
-
-    eventToProperties: function (event) {
-
-      var properties = {};
-
-      properties['timestamp'] = event.timestamp;
-      properties['type'] = event.type;
-      properties['metaKey'] = event.metaKey;
-
-      return properties;
-
-    },
-
-    elementToProperties: function (element, extraProperties) {
-
-      var properties = extraProperties || {};
-
-      // add the tag name
-      properties.tagName = element.tagName;
-
-      // add the inner text for some tag types
-      if (element.tagName === 'A') {
-        properties.text = element.innerText;
-      }
-
-      // add each attribute
-      $(element.attributes).each(function (index, attr) {
-        properties[attr.nodeName] = attr.value;
-      });
-
-      // break classes out into an array if any exist
-      var classes = $(element).attr('class');
-      if (classes) {
-        properties['classes'] = classes.split(/\s+/)
-      }
-
-      properties['path'] = $(element).getPath();
-
-      return properties;
-
-    },
-
-    formElementToProperties: function (formElement) {
-
-      var formValues = {};
-
-      // TODO: remove dependency on jQuery
-      formValues.form_values = $(formElement).serializeArray();
-      // simple alias for now, but could do more as
-      // far as the form values are concerned
-      return this.elementToProperties(formElement, formValues);
-
-    },
-
-    inputElementToProperties: function(inputElement) {
-
-      var inputValues = {
-        value: $(inputElement).val()
-      };
-
-      var parentForm = $(inputElement).closest("form");
-      if(parentForm.size() > 0) {
-        inputValues.form = this.elementToProperties(parentForm[0])
-      }
-
-      return this.elementToProperties(inputElement, inputValues);
-
-    }
-
-  }
-
-  function toClickProperties(event, element, moreProperties) {
-
-    var defaultProperties = CommonWeb.options.globalProperties;
-    var properties = $.extend(true, {}, defaultProperties, toProperties(moreProperties, [event, element]));
-
-    var elementProperties = { element: CommonWeb.Transformations.elementToProperties(element, null) };
-    var eventProperties = { event: CommonWeb.Transformations.eventToProperties(event) };
-
-    return $.extend(true, {}, properties, elementProperties, eventProperties);
-
-  }
-
-  function toChangeProperties(event, element, previousValue, moreProperties) {
-
-    var defaultProperties = CommonWeb.options.globalProperties;
-    var properties = $.extend(true, {}, defaultProperties, toProperties(moreProperties, [event, element]));
-
-    var elementProperties = { element: CommonWeb.Transformations.inputElementToProperties(element) };
-    if(previousValue && previousValue !== "") {
-      elementProperties.element.previousValue = previousValue
-    }
-
-    var eventProperties = { event: CommonWeb.Transformations.eventToProperties(event) };
-
-    return $.extend(true, {}, properties, elementProperties, eventProperties);
-  }
-
-  function toSubmitProperties(event, element, moreProperties) {
-
-    var defaultProperties = CommonWeb.options.globalProperties;
-    var properties = $.extend(true, {}, defaultProperties, toProperties(moreProperties, [event, element]));
-
-    var elementProperties = { element: CommonWeb.Transformations.formElementToProperties(element) };
-    var eventProperties = { event: CommonWeb.Transformations.eventToProperties(event) };
-
-    return $.extend(true, {}, properties, elementProperties, eventProperties);
-
-  }
-
-  function toProperties(propertiesOrFunction, args) {
-    if (typeof propertiesOrFunction === 'function') {
-      return propertiesOrFunction.apply(window, args);
-    } else {
-      return propertiesOrFunction
-    }
-  }
-
-  function isMetaKey(event) {
-    return event.metaKey || event.altKey || event.ctrlKey || event.shiftKey;
-  }
-
-  /*
-   jQuery-GetPath v0.01, by Dave Cardwell. (2007-04-27)
-
-   http://davecardwell.co.uk/javascript/jquery/plugins/jquery-getpath/
-
-   Copyright (c)2007 Dave Cardwell. All rights reserved.
-   Released under the MIT License.
-
-
-   Usage:
-   var path = $('#foo').getPath();
-   */
-  jQuery.fn.extend({
-    getPath: function( path ) {
-      // The first time this function is called, path won't be defined.
-      if ( typeof path == 'undefined' ) path = '';
-
-      // If this element is <html> we've reached the end of the path.
-      if ( this.is('html') )
-        return 'html' + path;
-
-      // Add the element name.
-      var cur = this.get(0).nodeName.toLowerCase();
-
-      // Determine the IDs and path.
-      var id    = this.attr('id'),
-        klass = this.attr('class');
-
-      // Add the #id if there is one.
-      if ( typeof id != 'undefined' )
-        cur += '#' + id;
-
-      // Add any classes.
-      if ( typeof klass != 'undefined' )
-      cur += '.' + klass.split(/[\s\n]+/).join('.');
-
-      // Recurse up the DOM.
-      return this.parent().getPath( ' > ' + cur + path );
-    }
-  });
-
-  // backends
-
-  CommonWeb.Keen = {
-    Client: null,
-    Debug: false,
-    Callback: function (collection, properties, callback) {
-      CommonWeb.Keen.Client.addEvent(collection, properties, function() {
-        if (CommonWeb.Keen.Debug) {
-          console.log(collection + ": " + JSON.stringify(properties));
-        }
-        if (callback) {
-          callback();
-        }
-      });
-    },
-    globalProperties: {
-      keen: {
-        addons: [
-          {
-            "name": "keen:ip_to_geo",
-            "input": {
-              "ip": "ip_address"
-            },
-            "output": "ip_geo_info"
-          },
-          {
-            "name": "keen:ua_parser",
-            "input": {
-              "ua_string": "user_agent"
-            },
-            "output": "parsed_user_agent"
-          },
-          {
-            "name": "keen:url_parser",
-            "input": {
-              "url": "page_url"
-            },
-            "output": "parsed_page_url"
-          },
-          {
-            "name": "keen:referrer_parser",
-            "input": {
-              "referrer_url": "referrer_url",
-              "page_url": "page_url"
-            },
-            "output": "referrer_info"
-          }
-        ]
-      },
-      ip_address: "${keen.ip}",
-      user_agent: "${keen.user_agent}"
-    }
   };
 
-  window.CommonWeb = CommonWeb;
+/**
+ * Pageview tracking hooks
+ * @param moreProperties
+ * @return CommonWeb.Callback
+*/
+CommonWeb.trackPageview = function (moreProperties) {
+  var defaultProperties = CommonWeb.options.globalProperties;
+  var properties = jQuery.extend(true, {}, defaultProperties, toProperties(moreProperties));
 
-})();
+  CommonWeb.Callback(properties);
+};
+
+/**
+ * Track click events from links
+ * @param elements
+ * @param moreProperties
+ * @return CommonWeb.Callback
+*/
+CommonWeb.trackClicks = function (addEvtListener, elements, moreProperties) {
+  const evtType = 'click'
+  if (typeof elements === 'undefined') {
+    elements = document.querySelectorAll("a");
+  }
+
+  if (!addEvtListener) {
+    return CommonWeb.removeEvtListener(elements, evtType)
+  }
+
+  jQuery.each(elements, (idx, elem) => {
+    jQuery(elem).on(evtType, (evt) => {
+      const props = toClickProperties(evt, elem, moreProperties);
+
+      doClick(props, elem, evt);
+    });
+  });
+};
+
+/**
+ * Track click events from elements that are not links
+ * @param elements
+ * @param moreProperties
+ * @return CommonWeb.Callback
+*/
+CommonWeb.trackClicksPassive = function (addEvtListener, elements, moreProperties) {
+  const evtType = 'click'
+  if (typeof elements === 'undefined') {
+    elements = jQuery("button, :submit, i");
+  }
+
+  if (!addEvtListener) {
+    return CommonWeb.removeEvtListener(elements, evtType)
+  }
+
+  jQuery.each(elements, (idx, elem) => {
+    jQuery(elem).on(evtType, (evt) => {
+      const props = toClickPassiveProperties(evt, elem, moreProperties);
+
+      doClick(props, elem, evt);
+    });
+  });
+};
+
+function doClick(props, elem, evt) {
+  const pageWillUnload = elem.href && elem.target !== '_blank' && !isMetaKey(evt) || elem.type === 'submit';
+  let unloadCallback = function () {};
+  // let errorInstance = false;
+
+  // if the page will unload, don't let the JS evt bubble but navigate to the href after the click
+  if (pageWillUnload) {
+    evt.preventDefault();
+
+    // only need to refresh the page
+    // TODO: how about query parameters that are submitted on form submission???
+    if (elem.type === 'submit') {
+      unloadCallback = () => window.location.href = window.location.href;
+    } else {
+      // errorInstance = isNotSameDomain(elem.href);
+
+      unloadCallback = () => window.location.href = elem.href;
+    }
+  }
+
+  CommonWeb.Callback(props, unloadCallback);
+}
+
+/**
+ * Track for input change events
+ * @param elements
+ * @param moreProperties
+ * @return CommonWeb.Callback
+*/
+CommonWeb.trackInputChanges = function (addEvtListener, elements, moreProperties) {
+  const evtType = 'change'
+  if (typeof elements === 'undefined') {
+    elements = jQuery("input, textarea");
+  }
+
+  if (!addEvtListener) {
+    return CommonWeb.removeEvtListener(elements, evtType)
+  }
+
+  jQuery.each(elements, function (index, element) {
+    const currentValue = jQuery(element).val();
+
+    jQuery(element).on(evtType, function (event) {
+      var properties = toChangeProperties(event, element, currentValue, moreProperties);
+
+      CommonWeb.Callback(properties);
+    });
+  });
+};
+
+CommonWeb.removeEvtListener = function(elements, evtType) {
+  jQuery.each(elements, (idx, elem) => {
+    jQuery(elem).off(evtType)
+  })
+}
+
+/**
+ * Track for select input change events
+ * @param elements
+ * @param moreProperties
+ * @return CommonWeb.Callback
+*/
+CommonWeb.trackSelectInputChanges = function (addEvtListener, elements, moreProperties) {
+  const evtType = 'change'
+  if (typeof elements === 'undefined') {
+    elements = document.querySelectorAll("select");
+  }
+
+  if (!addEvtListener) {
+    return CommonWeb.removeEvtListener(elements, evtType)
+  }
+
+  jQuery.each(elements, function (index, element) {
+    const currentValue = jQuery(element).val();
+    const currentTextValue = jQuery(element)
+      .find('option')
+      .filter((idx, elem) => currentValue === jQuery(elem).val())
+      .text();
+
+    jQuery(element).on(evtType, function (event) {
+      const properties = toSelectChangeProperties(event, element, currentTextValue, currentValue, moreProperties);
+
+      CommonWeb.Callback(properties);
+    });
+  });
+};
+
+/**
+ * Tranformations of events and elements to properties override as a workaround to add / remove properties
+ */
+CommonWeb.Transformations = {
+  eventToProperties: function (evt) {
+    var props = {};
+
+    props.scrollTop = evt.target.offsetTop;
+    props.timeStamp = evt.timeStamp;
+    props.type = evt.type;
+    props.metaKey = evt.metaKey;
+
+    return props;
+  },
+  elementToProperties: function (elem, extraProps) {
+    let props = extraProps || {};
+    const classes = jQuery(elem).attr('class');
+
+    props.tagName = elem.tagName;
+    props.path = jQuery(elem).getPath();
+
+    if (classes) {
+      props.classes = classes.split(/\s+/);
+    }
+
+    jQuery(elem.attributes).each(function (index, attr) {
+      props[attr.nodeName] = attr.value;
+    });
+
+    return props;
+  },
+  clickElementToProperties: function (clickElem) {
+    let clickProps = {};
+
+    clickProps.text = clickElem.innerText;
+
+    return this.elementToProperties(clickElem, this.appendProperties(clickElem, clickProps));
+  },
+  clickPassiveElementToProperties: function (clickPassiveElem) {
+    let clickPassiveProps = {};
+
+    if (clickPassiveElem.tagName === 'BUTTON')
+      clickPassiveProps.text = clickPassiveElem.innerText;
+
+    if (clickPassiveElem.tagName === 'INPUT')
+      clickPassiveProps.value = clickPassiveElem.value;
+
+    return this.elementToProperties(clickPassiveElem, this.appendProperties(clickPassiveElem, clickPassiveProps));
+  },
+  formElementToProperties: function (formElem) {
+    return {
+      form_values: jQuery(formElem).serializeArray(),
+      form: this.elementToProperties(formElem)
+    }
+  },
+  inputElementToProperties: function (inputElem, extraProps) {
+    let inputProps = extraProps || {};
+
+    inputProps.value = inputElem.value;
+
+    return this.elementToProperties(inputElem, this.appendProperties(inputElem, inputProps));
+  },
+  selectElementToProperties: function(selectElem, extraProps) {
+    let selectProps = extraProps || {};
+
+    selectProps.value = selectElem.value,
+    selectProps.text = selectElem.selectedOptions[0].innerText
+
+    return this.elementToProperties(selectElem, this.appendProperties(selectElem, selectProps));
+  },
+
+  /**
+   * Append additional properties to all types of elements
+   *
+   * form properties
+   */
+   appendProperties: function(element, obj) {
+    const parentForm = jQuery(element).closest('form');
+    let additionalProperties = {};
+
+    if (parentForm.length > 0) {
+      jQuery.extend(additionalProperties, this.formElementToProperties(parentForm[0]));
+    }
+
+    return jQuery.extend(obj, additionalProperties);
+  }
+};
+
+/**
+ * Get click event properties
+ * @param event
+ * @param element
+ * @param moreProperties
+ * @return
+ */
+ function toClickProperties(event, element, moreProperties) {
+  const defaultProperties = CommonWeb.options.globalProperties;
+  const properties = jQuery.extend(true, {}, defaultProperties, toProperties(moreProperties, [event, element]));
+  const eventProperties = {event: CommonWeb.Transformations.eventToProperties(event)};
+  const elementProperties = {element: CommonWeb.Transformations.clickElementToProperties(element)};
+
+  return jQuery.extend(true, {}, properties, elementProperties, eventProperties);
+}
+
+/**
+ * Get button click event properties
+ * @param event
+ * @param element
+ * @param moreProperties
+ * @return
+ */
+ function toClickPassiveProperties(event, element, moreProperties) {
+  const defaultProperties = CommonWeb.options.globalProperties;
+  const properties = jQuery.extend(true, {}, defaultProperties, toProperties(moreProperties, [event, element]));
+  const eventProperties = {event: CommonWeb.Transformations.eventToProperties(event)};
+  const elementProperties = {element: CommonWeb.Transformations.clickPassiveElementToProperties(element)};
+
+  return jQuery.extend(true, {}, properties, elementProperties, eventProperties);
+}
+
+/**
+ * Get change event properties
+ * @param event
+ * @param elements
+ * @param previousValue
+ * @param moreProperties
+ * @return
+ */
+ function toChangeProperties(event, element, previousValue, moreProperties) {
+  const defaultProperties = CommonWeb.options.globalProperties;
+  const extraProps = {previousValue: previousValue};
+  const properties = jQuery.extend(true, {}, defaultProperties, toProperties(moreProperties, [event, element]));
+  const eventProperties = {event: CommonWeb.Transformations.eventToProperties(event)};
+  let elementProperties = {element: CommonWeb.Transformations.inputElementToProperties(element, extraProps)};
+
+  return jQuery.extend(true, {}, properties, elementProperties, eventProperties);
+}
+
+/**
+ * Get select change event properties
+ * @param event
+ * @param elements
+ * @param previousValue
+ * @param moreProperties
+ * @return
+ */
+ function toSelectChangeProperties(event, element, previousText, previousValue, moreProperties) {
+  const defaultProperties = CommonWeb.options.globalProperties;
+  const extraProps = {previousText: previousText, previousValue: previousValue};
+  const properties = jQuery.extend(true, {}, defaultProperties, toProperties(moreProperties, [event, element]));
+  const eventProperties = {event: CommonWeb.Transformations.eventToProperties(event)};
+  let elementProperties = {element: CommonWeb.Transformations.selectElementToProperties(element, extraProps)};
+
+  return jQuery.extend(true, {}, properties, elementProperties, eventProperties);
+}
+
+/**
+ * Get submit event properties
+ * @param event
+ * @param element
+ * @param moreProperties
+ * @return
+ */
+ function toSubmitProperties(event, element, moreProperties) {
+  var defaultProperties = CommonWeb.options.globalProperties;
+  var properties = jQuery.extend(true, {}, defaultProperties, toProperties(moreProperties, [event, element]));
+  var elementProperties = {element: CommonWeb.Transformations.formElementToProperties(element)};
+  var eventProperties = {event: CommonWeb.Transformations.eventToProperties(event)};
+
+  return jQuery.extend(true, {}, properties, elementProperties, eventProperties);
+}
+
+/**
+ * UTILITY FUNCTIONS
+ */
+ function toProperties(propertiesOrFunction, args) {
+  if (typeof propertiesOrFunction === 'function') {
+    return propertiesOrFunction.apply(window, args);
+  } else {
+    return propertiesOrFunction;
+  }
+}
+
+function isMetaKey(event) {
+  return event.metaKey || event.altKey || event.ctrlKey || event.shiftKey;
+}
+
+// This is the improved getPath that doesn't use class names but uses nth-child/id
+jQuery.fn.extend({
+    /**
+     * Get path to element
+     *
+     * Usage: var path = $('#foo').getPath();
+     * @return
+     */
+     getPath: function () {
+      return this.cssSelector(this.get(0));
+    },
+    /**
+     * Generate a CSS selector string to target the given node
+     *
+     * @param  {HTMLElement} el     Node to target
+     * @return {string}             CSS selector
+     */
+     cssSelector: function(el) {
+      let names = [];
+      while (el.parentNode) {
+        if (el.id) {
+                // only use the first id name if an element has multiple
+                el.id = el.id.split(' ')[0]
+                // check DOM if a duplicate ID is found in the DOM
+                const nodeList = document.querySelectorAll('[id]'),
+                nodeArray = [].slice.call(nodeList);
+
+                const dups = nodeArray
+                .filter((elem) => elem.id === el.id)
+                .length;
+
+                // if duplicate ID's found, get the path & the id `A#testingID1:nth-child(2)`
+                if (dups > 1) {
+                  getThePath(`#${el.id}`);
+                } else {
+                  names.unshift(`${el.tagName}#${el.id}`);
+                }
+              } else {
+                getThePath();
+              }
+
+              el = el.parentNode;
+            }
+
+            function getThePath(elementID) {
+              const id = elementID || '';
+
+              if (el === el.ownerDocument.documentElement || el === el.ownerDocument.body)
+                return names.unshift(el.tagName);
+
+              let c = 1;
+              for (let e = el; e.previousElementSibling; e = e.previousElementSibling, c++) {}
+
+                const path = `${el.tagName}${id}:nth-child(${c})`;
+              return names.unshift(path);
+            }
+
+            return names.join(' > ');
+          }
+        });
+
+module.exports = CommonWeb;
